@@ -13,6 +13,7 @@ stages:
 provider:
   name: aws
   runtime: nodejs20.x
+  region: us-east-1
   # Uncomment to easily set up a custom domain. Read the docs for more details:
   # https://www.serverless.com/framework/docs/providers/aws/guide/domains
   # domain: api.example.com
@@ -61,3 +62,89 @@ resources:
               ProjectionType: ALL
         BillingMode: PAY_PER_REQUEST
         TableName: ${param:tableName}
+    LogS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        LifecycleConfiguration:
+          Rules:
+            - Status: Enabled
+              Prefix: logs/
+              ExpirationInDays: 365
+
+    FirehoseRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: firehose.amazonaws.com
+              Action: sts:AssumeRole
+        Path: /
+        Policies:
+          - PolicyName: FirehoseToS3Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:PutObjectAcl
+                    - s3:ListBucket
+                    - s3:GetBucketLocation
+                  Resource:
+                    - Fn::GetAtt: [LogS3Bucket, Arn]
+                    - Fn::Join: ['', [Fn::GetAtt: [LogS3Bucket, Arn], '/*']]
+
+    FirehoseDeliveryStream:
+      Type: AWS::KinesisFirehose::DeliveryStream
+      Properties:
+        DeliveryStreamName: ${self:service}-cw-logs-${sls:stage}
+        S3DestinationConfiguration:
+          BucketARN: !GetAtt LogS3Bucket.Arn
+          RoleARN: !GetAtt FirehoseRole.Arn
+          BufferingHints:
+            SizeInMBs: 5
+            IntervalInSeconds: 300
+          CompressionFormat: GZIP
+
+    LogsDestinationRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: logs.amazonaws.com
+              Action: sts:AssumeRole
+        Path: /
+        Policies:
+          - PolicyName: AllowLogsToPutToFirehose
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - firehose:PutRecord
+                    - firehose:PutRecordBatch
+                  Resource: !GetAtt FirehoseDeliveryStream.Arn
+
+    LogsDestination:
+      Type: AWS::Logs::Destination
+      Properties:
+        DestinationName: ${self:service}-firehose-destination-${sls:stage}
+        RoleArn: !GetAtt LogsDestinationRole.Arn
+        TargetArn: !GetAtt FirehoseDeliveryStream.Arn
+  Outputs:
+    CloudWatchLogsBucket:
+      Description: S3 bucket where CloudWatch logs are delivered
+      Value: !Ref LogS3Bucket
+    FirehoseDeliveryStreamName:
+      Description: Kinesis Firehose Delivery Stream name
+      Value: ${self:service}-cw-logs-${sls:stage}
+    LogsDestinationArn:
+      Description: CloudWatch Logs Destination ARN (use to create subscription filters)
+      Value: !GetAtt LogsDestination.Arn
+    

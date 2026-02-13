@@ -15,10 +15,8 @@ export const registerUser = async (req, res) => {
       .status(400)
       .json({ error: "All fields (name, email, password) are required" });
   }
-
   const emailExists = await helper(email);
-  console.log("emailExists:", emailExists);
-  if (emailExists !== null) {
+  if (emailExists) {
     return res.status(400).json({ message: "Email already exists" });
   }
 
@@ -28,7 +26,14 @@ export const registerUser = async (req, res) => {
   try {
     const command = new PutCommand(params);
     await docClient.send(command);
-    res.json({ message: "User registered successfully", user: newUser });
+    res.json({
+      message: "User registered successfully",
+      user: {
+        userId: newUser.userId,
+        name: newUser.name,
+        email: newUser.email,
+      },
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message || "Could not register user" });
@@ -37,28 +42,31 @@ export const registerUser = async (req, res) => {
 
 export const loginUser = async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) {
-    return res
-      .status(400)
-      .json({ error: "Both email and password are required" });
-  }
-  try {
-    const emailExists = await helper(email);
-    if (emailExists !== email) {
-      return res.status(500).json({ error: "Invalid Credentials" });
-    }
 
-    return res.status(200).json({
+  try {
+    if (!email || !password) {
+      res.status(400).json({ error: "All fields are required" });
+    }
+    const emailExists = await helper(email);
+    
+    const isPasswordValid = await bcrypt.compare(
+      password,
+      emailExists.password,
+    );
+    if (!emailExists || !isPasswordValid) {
+      res.status(401).json({ error: "Invalid Credentials" });
+    }
+    res.status(200).json({
       message: "User logged in successfully",
-      userId: Item.userId,
-      email: Item.email,
-      name: Item.name,
+      user: {
+        userId: emailExists.userId,
+        name: emailExists.name,
+        email: emailExists.email,
+      },
     });
   } catch (error) {
-    console.log(error);
-    return res
-      .status(500)
-      .json({ error: error.message || "Could not retrieve user" });
+    console.log("new error:", error);
+    res.status(500).json({ error: error.message || "Could not retrieve user" });
   }
 };
 
@@ -67,10 +75,12 @@ export const getAllUsers = async (req, res) => {
   try {
     const command = new ScanCommand(params);
     const { Items } = await docClient.send(command);
+
+    console.log("getAllUsers Items:", Items);
     const User = Items.map((item) => ({
-      userId: item.userId,
-      name: item.name,
-      email: item.email,
+      userId: item.userId.S,
+      name: item.name.S,
+      email: item.email.S,
     }));
     res.status(200).json(User);
   } catch (error) {

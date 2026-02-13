@@ -15,7 +15,8 @@ export default async function checkUserByEmail(email) {
   try {
     const command = new QueryCommand(params);
     const { Items } = await docClient.send(command);
-    return Items && Items.length > 0 ?Items[0]?.email : null;
+    console.log("checkUserByEmail Items:", Items[0]);
+    return Items && Items.length > 0 ? Items[0] : null;
   } catch (error) {
     console.error("checkUserByEmail error:", error);
     throw error;
